@@ -1,4 +1,4 @@
-# Microsoft.Windows.Server.DNS2012R2.Monitoring.Addendum 1.0.3.6
+# Microsoft.Windows.Server.DNS2012R2.Monitoring.Addendum 1.0.3.7
 
 Download here
 
