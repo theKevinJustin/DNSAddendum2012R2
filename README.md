@@ -1,10 +1,12 @@
-# Microsoft.Windows.Server.DNS2012R2.Monitoring.Addendum 1.0.3.7
+# Microsoft.Windows.Server.DNS2012R2.Monitoring.Addendum 1.0.4.2
 
 Download here
 
 Microsoft.Windows.Server.DNS2012R2.Monitoring.Addendum - Management pack provides multiple capabilities, including: count logic monitors, daily summary report alerts of DNS alerts, daily alert closure automation, service recovery automation, synthetic internal/external nslookup check scoped to PDC emulators (versus all DNS servers), and WMI validation alert logic changes when Security tools randomly block WMI access.
 
 Version History:
+v1.0.4.2  27 Sep 2023 - Updated Rule overrides
+v1.0.4.0  26 Sep 2023 - Updated Discovery and Overrides
 v1.0.3.7  20 Sep 2023 - Updated for generic import, Discovery and Override GUIDs
 v1.0.3.6  18 Jul 2023 - Updated alert severity
 v1.0.3.5  27 Jun 2023 - ADI DNS count monitors for 3152,7616
