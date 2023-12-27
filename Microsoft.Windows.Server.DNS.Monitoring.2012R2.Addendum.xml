@@ -2,7 +2,7 @@
   <Manifest>
     <Identity>
       <ID>Microsoft.Windows.Server.DNS.Monitoring.2012R2.Addendum</ID>
-      <Version>1.0.4.3</Version>
+      <Version>1.0.4.4</Version>
     </Identity>
     <Name>Microsoft Windows Server DNS Monitoring 2012R2 Addendum</Name>
     <References>
@@ -83,7 +83,7 @@
                 </Scheduler>
               </DataSource>
               <ProbeAction ID="PA" TypeID="Windows!Microsoft.Windows.PowerShellPropertyBagTriggerOnlyProbe">
-                <ScriptName>Proactive.DailyTasks.DNS2012.R2.Alerts.Close.Script.Datasource.v1043.ps1</ScriptName>
+                <ScriptName>Proactive.DailyTasks.DNS2012.R2.Alerts.Close.Script.Datasource.v1044.ps1</ScriptName>
                 <ScriptBody>
 #=================================================================================
 #  Script to gather DNS2012R2 alerts and close via on demand task
@@ -95,9 +95,9 @@
 
 # Constants section - modify stuff here:
 #=================================================================================
-# Assign script name variable for use in event logging.  
+# Assign script name variable for use in event logging.
 # ScriptName should be the same as the ID of the module that the script is contained in
-$ScriptName = "Proactive.DailyTasks.DNS2012.R2.Alerts.Close.Script.Datasource.v1043.ps1"
+$ScriptName = "Proactive.DailyTasks.DNS2012.R2.Alerts.Close.Script.Datasource.v1044.ps1"
 $EventID = "546"
 #=================================================================================
 
@@ -111,7 +111,7 @@ $whoami = whoami
 # Load MOMScript API
 $momapi = New-Object -comObject MOM.ScriptAPI
 #Log script event that we are starting task
-$momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script is starting. `n Running as ($whoami).")
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Closure Script is starting. `n Running as ($whoami).")
 #=================================================================================
 
 
@@ -127,6 +127,7 @@ $bag = $momapi.CreatePropertyBag()
 
 #For a simple example - get files in Windows Temp:
 $date = get-date -uFormat "%Y-%m-%d"
+$Age = [DateTime](Get-Date).AddDays(-1)
 
 # Grab past 24 hours
 if ( (get-date).DayOfWeek -ne "Monday" )
@@ -138,11 +139,11 @@ if ( (get-date).DayOfWeek -eq "Monday" )
 	$Time = [DateTime](Get-Date).AddDays(-3)
 	}
 	
-$momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Gather DNS2012R2 Alerts for date ($date).")
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"Gather DNS2012R2 Alerts for date ($date).")
 
 # Gather WINOS alerts
 ## Grab the MP, get the Monitors and Rules from the MP, then grab all alerts found inside the Monitors/Rules
-$SCOMCoreMP = Get-SCOMManagementPack -DisplayName "Microsoft Windows Server DNS Monitoring"
+$SCOMCoreMP = Get-SCOMManagementPack -DisplayName "Microsoft Windows Server DNS Monitoring" 
 $SCOMCoreRules = $SCOMCoreMP.GetRules()
 $SCOMCoreMonitors = $SCOMCoreMP.GetMonitors()
 
@@ -208,7 +209,7 @@ $DNSAMessage = $DNSAMessage | out-string
   $Result = "GOOD"
   $Message = "DNS2012R2 Monitors auto-closed for ($date)"
 
-  $momapi.LogScriptEvent($ScriptName,$EventID,0,"# DNS2012R2 Monitors auto-closed for ($date). `n `n$DNSAMessage")
+  $momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Monitors auto-closed for ($date). `n `n$DNSAMessage")
 
 #$bag.AddValue('Result',$Result)
 $bag.AddValue('Count',$Test)
@@ -219,11 +220,24 @@ $bag.AddValue('Summary',$DNSAMessage)
 $bag
 
 
+# Rule closure logic
+#=================================================================================
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"Proactive DailyTasks DNS2012R2 rule reset started for ($date)")
 
-#
-# If Cleanup needed, array of report monitors
+$SCOMCoreRulesToClear = $SCOMCoreRuleAlerts | where { ( $_.TimeAdded -lt $Age ) }
+# Convert Age back to days for alert properties logging
+$Days = ((Get-date) - $Age).Days
+if ( $SCOMCoreRulesToClear.Count -gt 0 )
+	{
+	$SCOMCoreRulesToClear | Resolve-SCOMAlert -Comment "Closing $Days day old alerts after report alert generated - DNS Addendum Automation DS"
+	}
 
-# Reset Monitors Script
+# Write event for rule closure
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"Proactive DailyTasks DNS2012R2 rule reset completed for ($date)")
+
+
+#=================================================================================
+# Reset Monitors Script base code modified
 # Put ps1 in mgmtpacks folder
 # https://sc.scomurr.com/scom-2012-monitor-reset-cleaning-up-the-environment/
 #	Download
@@ -232,41 +246,70 @@ $bag
 #Alternate
 #https://gallery.technet.microsoft.com/scriptcenter/Auto-reset-script-for-d8b775ca
 
+# Changed up logic to sort unique classes in mgmnt pack families.
+# Added Age variable for monitors thanks to Aris Somatis - $Age specified in top level variables
+# Cycling through monitors made reset loop huge ~650 monitors when only ~50 classes
+# New logic reduced runtime from 8 minutes to roughly 8 seconds
+#=================================================================================
 
-if ( $SCOMCoreMonitorAlerts.Count -gt 0 )
-{
-foreach ($MonitorDisplayName in $SCOMCoreMonitorAlerts.DisplayName)
+# Write event for rule closure
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"Proactive DailyTasks DNS2012R2 Monitors reset started for ($date).")
+
+if ( $SCOMCoreReportAlerts.Count -gt 0 )
 	{
-	$Monitors = @(Get-SCOMMonitor -displayname $MonitorDisplayName)
+	# Get classes - Examples - Microsoft.Windows.Server.AD.2016.Discovery, Microsoft.Windows.Server.AD.Library
+		#$Library = Get-SCOMManagementPack -name "Microsoft.Windows.Server.AD.Class.Library"
+		$Monitoring = $SCOMCoreMP
+		#$Discovery = Get-SCOMManagementPack -name Microsoft.Windows.Server.AD.2016.Discovery
+
+	# DNS pack naming
+	$DNSClasses = @(Get-SCOMClass -ManagementPack $Monitoring; )
+	$DNSClass = $DNSClasses | sort -property Name -uniq
+	# Debug
+	$DNSClass.Count
 
 	# Set up monitor objects to reset
-	foreach ($Monitor in $Monitors)
+	foreach ($Class in $DNSClass)
 		{
-		$MonitorClass = Get-SCOMClass -Id $Monitor.Target.Id
-		$ActiveMonitors = Get-SCOMClassInstance -Class $MonitorClass | ? { ($_.healthstate -ne 'Success') -AND ( $_.healthstate -ne 'Uninitialized') -AND ($_.IsAvailable -eq $true) }
-		write-host "Found" + $ActiveMonitors.Count + "active monitors."
-		if ( $ActiveMonitors -ne $null)
+		$ActiveMonitors = @(Get-SCOMClassInstance -Class $Class | ? { ($_.healthstate -ne 'Success') -AND ( $_.healthstate -ne 'Uninitialized') -AND ($_.IsAvailable -eq $true) } )
+		# Debug
+		$ActiveMonitors.Count
+		# $ActiveMonitors | fl -property *
+		write-host "Found" $ActiveMonitors.Count "unhealthy monitors for class" $Class
+		foreach ( $UnhealthyOLDMonitor in $ActiveMonitors )
 			{
-			foreach ($ActiveMonitor in $ActiveMonitors)
+			#if ( $UnhealthyOLDMonitor.AvailabilityLastModified -lt $Age )
+			if ( $UnhealthyOLDMonitor.StateLastModified -lt $Age )
 				{
-				write-host " Resetting Health State on '" +$ActiveMonitor.FullName + "'" 
-				$ActiveMonitor.ResetMonitoringState($Monitor.ID)
+				#$UnhealthyMonitors += $ActiveMonitors.Count
+				#UnhealthyOLDMonitor | select AvailabilityLastModified,Path,DisplayName
+				#$UnhealthyOLDMonitor.Count
+				#write-host "Found" + $UnhealthyOLDMonitor.Count + "unhealthy monitor beyond" $Age "days."
+				#write-host ""
+				if ( $ActiveMonitors.Count -gt 0)
+					{
+					foreach ( $ActiveMonitor in $UnhealthyOLDMonitor )
+						{
+						# Debug
+						$ActiveMonitor.ID
+						write-host " Resetting Health State on '" + $ActiveMonitor.FullName + "'" 
+						write-host ""
+						$ActiveMonitor.ResetMonitoringState($ActiveMonitor)
+						}
+					}
 				}
 			}
 		}
+	# Debug
+	#$MonitorClass | fl -property *
+	#$MonitorClass | select DisplayName,ID
 	}
-}
 
-$momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Monitors auto-close completed for ($date).")
+# Debug Write event for rule closure
+#=================================================================================
+# Write event for rule closure
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"Proactive DailyTasks DNS2012R2 monitor reset completed for ($date)")
 
-
-#
-# (Rules) Alerts to auto close after reset monitor
-# Resolve alerts after report built
-$SCOMCoreRuleAlerts | Resolve-SCOMAlert
-
-
-$momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 alert rules resolved for ($date).")
 #=================================================================================
 # End MAIN script section
  
@@ -276,7 +319,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 alert rules resolved fo
 #Log an event for script ending and total execution time.
 $EndTime = Get-Date
 $ScriptTime = ($EndTime - $StartTime).TotalSeconds
-$momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script Completed. `n Script Runtime: ($ScriptTime) seconds.")
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Closure Script Completed. `n Script Runtime: ($ScriptTime) seconds.")
 #=================================================================================
 # End of script
                 </ScriptBody>
@@ -317,7 +360,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script Completed. `n Script Ru
                 </Scheduler>
               </DataSource>
               <ProbeAction ID="PA" TypeID="Windows!Microsoft.Windows.PowerShellPropertyBagTriggerOnlyProbe">
-                <ScriptName>Proactive.DailyTasks.DNS2012.R2.Alerts.SummaryReport.Script.Alert.DataSource.v1043.ps1</ScriptName>
+                <ScriptName>Proactive.DailyTasks.DNS2012.R2.Alerts.SummaryReport.Script.Alert.DataSource.v1044.ps1</ScriptName>
                 <ScriptBody>
 #=================================================================================
 #  Script to gather DNS2012R2 alerts and close via on demand task
@@ -329,9 +372,9 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script Completed. `n Script Ru
 
 # Constants section - modify stuff here:
 #=================================================================================
-# Assign script name variable for use in event logging.  
+# Assign script name variable for use in event logging.
 # ScriptName should be the same as the ID of the module that the script is contained in
-$ScriptName = "Proactive.DailyTasks.DNS2012.R2.Alerts.SummaryReport.Script.Alert.DataSource.v1043.ps1"
+$ScriptName = "Proactive.DailyTasks.DNS2012.R2.Alerts.SummaryReport.Script.Alert.DataSource.v1044.ps1"
 $EventID = "548"
 #=================================================================================
 
@@ -345,7 +388,7 @@ $whoami = whoami
 # Load MOMScript API
 $momapi = New-Object -comObject MOM.ScriptAPI
 #Log script event that we are starting task
-$momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script is starting. `n Running as ($whoami).")
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Report Summary Script is starting. `n Running as ($whoami).")
 #=================================================================================
 
 
@@ -362,7 +405,7 @@ $bag = $momapi.CreatePropertyBag()
 #For a simple example - get files in Windows Temp:
 $date = get-date -uFormat "%Y-%m-%d"
 
-$momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Gather DNS2012R2 Alerts for date ($date).")
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"Gather DNS2012R2 Alerts for date ($date).")
 
 
 # Grab past 24 hours
@@ -391,9 +434,9 @@ if ( $DNSAlerts.Count -gt 0 )
 		$Lmatch = $LLine |select-string -pattern " "
 		if ($Lmatch)
 			{
-			$Lmatch   
+			$Lmatch  
 			}
-		}           
+		}
 
 	foreach ( $file in $Zone )
 		{
@@ -567,10 +610,10 @@ $DNSMessage = $DNSMessage | out-string
 #============================================================
 
 
-  $Result = "GOOD"
-  $Message = "Daily DNS alerts report for ($date)"
+$Result = "GOOD"
+$Message = "Daily DNS alerts report for ($date)"
 
-  $momapi.LogScriptEvent($ScriptName,$EventID,0,"`n# DNS Monitors auto-closed for ($date). `n `n$DNSMessage")
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Summary report completed for ($date). `n `n$DNSMessage")
 
 #$bag.AddValue('Result',$Result)
 $bag.AddValue('Count',$Test)
@@ -582,14 +625,14 @@ $bag.AddValue('Summary',$DNSMessage)
 $bag
 #=================================================================================
 # End MAIN script section
- 
-  
+
+
 # End of script section
 #=================================================================================
 #Log an event for script ending and total execution time.
 $EndTime = Get-Date
 $ScriptTime = ($EndTime - $StartTime).TotalSeconds
-$momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script Completed. `n Script Runtime: ($ScriptTime) seconds.")
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Summary Report Script Completed. `n Script Runtime: ($ScriptTime) seconds.")
 #=================================================================================
 # End of script
                 </ScriptBody>
@@ -625,7 +668,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script Completed. `n Script Ru
                 </Scheduler>
               </DataSource>
               <ProbeAction ID="PA" TypeID="Windows!Microsoft.Windows.PowerShellPropertyBagTriggerOnlyProbe">
-                <ScriptName>Proactive.DNS2012R2Alerts.Synthetic.Monitor.Datasource.v1043.ps1</ScriptName>
+                <ScriptName>Proactive.DNS2012R2Alerts.Synthetic.Monitor.Datasource.v1044.ps1</ScriptName>
                 <ScriptBody>
 #=================================================================================
 #  Proactive DNS2012R2 Synthetic internal/external PowerShell script
@@ -648,8 +691,8 @@ $InternalDNS = "ds.army.mil"
 
 # Constants section - modify stuff here:
 #=================================================================================
-# Assign script name variable for use in event logging.  
-$ScriptName = "Proactive.DNS2012R2Alerts.Synthetic.Monitor.Datasource.v1043.ps1"
+# Assign script name variable for use in event logging.
+$ScriptName = "Proactive.DNS2012R2Alerts.Synthetic.Monitor.Datasource.v1044.ps1"
 $EventID = "548"
 #=================================================================================
 
@@ -666,7 +709,7 @@ $momapi = New-Object -comObject MOM.ScriptAPI
 $bag = $momapi.CreatePropertyBag()
 
 #Log script event that we are starting task
-$momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script is starting. `n Running as ($whoami).")
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Synthetic Script is starting. `n Running as ($whoami).")
 #=================================================================================
 
 
@@ -675,9 +718,9 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script is starting. `n Running
 #For a simple example - get files in Windows Temp:
 $date = get-date -uFormat "%Y-%m-%d"
 
-$momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Gather Proactive DNS2012R2 Alerts Synthetic monitor check for date ($date).")
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"Gather Proactive DNS Alerts Synthetic monitor check for date ($date).")
 
-$DSMessage = "Proactive DNS2012R2 Alerts Synthetic monitor for date ($date)."
+$DSMessage = "Proactive DNS Alerts Synthetic monitor for date ($date)."
 
 $DNSSyntheticOutput = @()
 
@@ -740,7 +783,7 @@ $bag
 #Log an event for script ending and total execution time.
 $EndTime = Get-Date
 $ScriptTime = ($EndTime - $StartTime).TotalSeconds
-$momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script Completed. `n Script Runtime: ($ScriptTime) seconds.")
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Synthetic Script Completed. `n Script Runtime: ($ScriptTime) seconds.")
 #=================================================================================
 # End of script
                 </ScriptBody>
@@ -756,6 +799,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script Completed. `n Script Ru
         </ModuleImplementation>
         <OutputType>System!System.PropertyBagData</OutputType>
       </DataSourceModuleType>
+
       <WriteActionModuleType ID="Proactive.DailyTasks.DNS2012.R2.Alerts.Close.Script.Alert.WA" Accessibility="Internal" Batching="false">
         <Configuration>
           <xsd:element minOccurs="1" name="TimeoutSeconds" type="xsd:integer" xmlns:xsd="http://www.w3.org/2001/XMLSchema" />
@@ -767,7 +811,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script Completed. `n Script Ru
           <Composite>
             <MemberModules>
               <WriteAction ID="PSWA" TypeID="Windows!Microsoft.Windows.PowerShellWriteAction">
-                <ScriptName>Proactive.DailyTasks.DNS2012.R2.Alerts.Close.Script.Alert.WA.v1043.ps1</ScriptName>
+                <ScriptName>Proactive.DailyTasks.DNS2012.R2.Alerts.Close.Script.Alert.WA.v1044.ps1</ScriptName>
                 <ScriptBody>
 #=================================================================================
 #  Script to gather DNS2012R2 alerts and close via on demand task
@@ -779,9 +823,9 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script Completed. `n Script Ru
 
 # Constants section - modify stuff here:
 #=================================================================================
-# Assign script name variable for use in event logging.  
+# Assign script name variable for use in event logging.
 # ScriptName should be the same as the ID of the module that the script is contained in
-$ScriptName = "Proactive.DailyTasks.DNS2012.R2.Alerts.Close.Script.Datasource.v1043.ps1"
+$ScriptName = "Proactive.DailyTasks.DNS2012.R2.Alerts.Close.Script.Datasource.v1044.ps1"
 $EventID = "547"
 #=================================================================================
 
@@ -795,7 +839,7 @@ $whoami = whoami
 # Load MOMScript API
 $momapi = New-Object -comObject MOM.ScriptAPI
 #Log script event that we are starting task
-$momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script is starting. `n Running as ($whoami).")
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Closure Script is starting. `n Running as ($whoami).")
 #=================================================================================
 
 
@@ -811,6 +855,7 @@ $bag = $momapi.CreatePropertyBag()
 
 #For a simple example - get files in Windows Temp:
 $date = get-date -uFormat "%Y-%m-%d"
+$Age = [DateTime](Get-Date).AddDays(-1)
 
 # Grab past 24 hours
 if ( (get-date).DayOfWeek -ne "Monday" )
@@ -822,11 +867,11 @@ if ( (get-date).DayOfWeek -eq "Monday" )
 	$Time = [DateTime](Get-Date).AddDays(-3)
 	}
 	
-$momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Gather DNS2012R2 Alerts for date ($date).")
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"Gather DNS2012R2 Alerts for date ($date).")
 
 # Gather WINOS alerts
 ## Grab the MP, get the Monitors and Rules from the MP, then grab all alerts found inside the Monitors/Rules
-$SCOMCoreMP = Get-SCOMManagementPack -DisplayName "Microsoft Windows Server DNS Monitoring"
+$SCOMCoreMP = Get-SCOMManagementPack -DisplayName "Microsoft Windows Server DNS Monitoring" 
 $SCOMCoreRules = $SCOMCoreMP.GetRules()
 $SCOMCoreMonitors = $SCOMCoreMP.GetMonitors()
 
@@ -892,7 +937,7 @@ $DNSAMessage = $DNSAMessage | out-string
   $Result = "GOOD"
   $Message = "DNS2012R2 Monitors auto-closed for ($date)"
 
-  $momapi.LogScriptEvent($ScriptName,$EventID,0,"`n# DNS2012R2 Monitors auto-closed for ($date). `n `n$DNSAMessage")
+  $momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Monitors auto-closed for ($date). `n `n$DNSAMessage")
 
 #$bag.AddValue('Result',$Result)
 $bag.AddValue('Count',$Test)
@@ -903,11 +948,24 @@ $bag.AddValue('Summary',$DNSAMessage)
 $bag
 
 
+# Rule closure logic
+#=================================================================================
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"Proactive DailyTasks DNS2012R2 rule reset started for ($date)")
 
-#
-# If Cleanup needed, array of report monitors
+$SCOMCoreRulesToClear = $SCOMCoreRuleAlerts | where { ( $_.TimeAdded -lt $Age ) }
+# Convert Age back to days for alert properties logging
+$Days = ((Get-date) - $Age).Days
+if ( $SCOMCoreRulesToClear.Count -gt 0 )
+	{
+	$SCOMCoreRulesToClear | Resolve-SCOMAlert -Comment "Closing $Days day old alerts after report alert generated - DNS Addendum Automation DS"
+	}
 
-# Reset Monitors Script
+# Write event for rule closure
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"Proactive DailyTasks DNS2012R2 rule reset completed for ($date)")
+
+
+#=================================================================================
+# Reset Monitors Script base code modified
 # Put ps1 in mgmtpacks folder
 # https://sc.scomurr.com/scom-2012-monitor-reset-cleaning-up-the-environment/
 #	Download
@@ -916,41 +974,70 @@ $bag
 #Alternate
 #https://gallery.technet.microsoft.com/scriptcenter/Auto-reset-script-for-d8b775ca
 
+# Changed up logic to sort unique classes in mgmnt pack families.
+# Added Age variable for monitors thanks to Aris Somatis - $Age specified in top level variables
+# Cycling through monitors made reset loop huge ~650 monitors when only ~50 classes
+# New logic reduced runtime from 8 minutes to roughly 8 seconds
+#=================================================================================
 
-if ( $SCOMCoreMonitorAlerts.Count -gt 0 )
-{
-foreach ($MonitorDisplayName in $SCOMCoreMonitorAlerts.DisplayName)
+# Write event for rule closure
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"Proactive DailyTasks DNS2012R2 Monitors reset started for ($date).")
+
+if ( $SCOMCoreReportAlerts.Count -gt 0 )
 	{
-	$Monitors = @(Get-SCOMMonitor -displayname $MonitorDisplayName)
+	# Get classes - Examples - Microsoft.Windows.Server.AD.2016.Discovery, Microsoft.Windows.Server.AD.Library
+		#$Library = Get-SCOMManagementPack -name "Microsoft.Windows.Server.AD.Class.Library"
+		$Monitoring = $SCOMCoreMP
+		#$Discovery = Get-SCOMManagementPack -name Microsoft.Windows.Server.AD.2016.Discovery
+
+	# DNS pack naming
+	$DNSClasses = @(Get-SCOMClass -ManagementPack $Monitoring; )
+	$DNSClass = $DNSClasses | sort -property Name -uniq
+	# Debug
+	$DNSClass.Count
 
 	# Set up monitor objects to reset
-	foreach ($Monitor in $Monitors)
+	foreach ($Class in $DNSClass)
 		{
-		$MonitorClass = Get-SCOMClass -Id $Monitor.Target.Id
-		$ActiveMonitors = Get-SCOMClassInstance -Class $MonitorClass | ? { ($_.healthstate -ne 'Success') -AND ( $_.healthstate -ne 'Uninitialized') -AND ($_.IsAvailable -eq $true) }
-		write-host "Found" + $ActiveMonitors.Count + "active monitors."
-		if ( $ActiveMonitors -ne $null)
+		$ActiveMonitors = @(Get-SCOMClassInstance -Class $Class | ? { ($_.healthstate -ne 'Success') -AND ( $_.healthstate -ne 'Uninitialized') -AND ($_.IsAvailable -eq $true) } )
+		# Debug
+		$ActiveMonitors.Count
+		# $ActiveMonitors | fl -property *
+		write-host "Found" $ActiveMonitors.Count "unhealthy monitors for class" $Class
+		foreach ( $UnhealthyOLDMonitor in $ActiveMonitors )
 			{
-			foreach ($ActiveMonitor in $ActiveMonitors)
+			#if ( $UnhealthyOLDMonitor.AvailabilityLastModified -lt $Age )
+			if ( $UnhealthyOLDMonitor.StateLastModified -lt $Age )
 				{
-				write-host " Resetting Health State on '" +$ActiveMonitor.FullName + "'" 
-				$ActiveMonitor.ResetMonitoringState($Monitor.ID)
+				#$UnhealthyMonitors += $ActiveMonitors.Count
+				#UnhealthyOLDMonitor | select AvailabilityLastModified,Path,DisplayName
+				#$UnhealthyOLDMonitor.Count
+				#write-host "Found" + $UnhealthyOLDMonitor.Count + "unhealthy monitor beyond" $Age "days."
+				#write-host ""
+				if ( $ActiveMonitors.Count -gt 0)
+					{
+					foreach ( $ActiveMonitor in $UnhealthyOLDMonitor )
+						{
+						# Debug
+						$ActiveMonitor.ID
+						write-host " Resetting Health State on '" + $ActiveMonitor.FullName + "'" 
+						write-host ""
+						$ActiveMonitor.ResetMonitoringState($ActiveMonitor)
+						}
+					}
 				}
 			}
 		}
+	# Debug
+	#$MonitorClass | fl -property *
+	#$MonitorClass | select DisplayName,ID
 	}
-}
 
-$momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Monitors auto-close completed for ($date).")
+# Debug Write event for rule closure
+#=================================================================================
+# Write event for rule closure
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"Proactive DailyTasks DNS2012R2 monitor reset completed for ($date)")
 
-
-#
-# (Rules) Alerts to auto close after reset monitor
-# Resolve alerts after report built
-$SCOMCoreRuleAlerts | Resolve-SCOMAlert
-
-
-$momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 alert rules resolved for ($date).")
 #=================================================================================
 # End MAIN script section
  
@@ -960,7 +1047,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 alert rules resolved fo
 #Log an event for script ending and total execution time.
 $EndTime = Get-Date
 $ScriptTime = ($EndTime - $StartTime).TotalSeconds
-$momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script Completed. `n Script Runtime: ($ScriptTime) seconds.")
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Closure Script Completed. `n Script Runtime: ($ScriptTime) seconds.")
 #=================================================================================
 # End of script
                 </ScriptBody>
@@ -986,7 +1073,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script Completed. `n Script Ru
           <Composite>
             <MemberModules>
               <WriteAction ID="PSWA" TypeID="Windows!Microsoft.Windows.PowerShellWriteAction">
-                <ScriptName>Proactive.DailyTasks.DNS2012.R2.Alerts.SummaryReport.Script.Alert.WA.v1043.ps1</ScriptName>
+                <ScriptName>Proactive.DailyTasks.DNS2012.R2.Alerts.SummaryReport.Script.Alert.WA.v1044.ps1</ScriptName>
                 <ScriptBody>
 #=================================================================================
 #  Script to gather DNS2012R2 alerts and close via on demand task
@@ -998,9 +1085,9 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script Completed. `n Script Ru
 
 # Constants section - modify stuff here:
 #=================================================================================
-# Assign script name variable for use in event logging.  
+# Assign script name variable for use in event logging.
 # ScriptName should be the same as the ID of the module that the script is contained in
-$ScriptName = "Proactive.DailyTasks.DNS2012.R2.Alerts.SummaryReport.Script.Alert.WA.v1043.ps1"
+$ScriptName = "Proactive.DailyTasks.DNS2012.R2.Alerts.SummaryReport.Script.Alert.WA.v1044.ps1"
 $EventID = "549"
 #=================================================================================
 
@@ -1014,7 +1101,7 @@ $whoami = whoami
 # Load MOMScript API
 $momapi = New-Object -comObject MOM.ScriptAPI
 #Log script event that we are starting task
-$momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script is starting. `n Running as ($whoami).")
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Report Summary Script is starting. `n Running as ($whoami).")
 #=================================================================================
 
 
@@ -1031,7 +1118,7 @@ $bag = $momapi.CreatePropertyBag()
 #For a simple example - get files in Windows Temp:
 $date = get-date -uFormat "%Y-%m-%d"
 
-$momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Gather DNS2012R2 Alerts for date ($date).")
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"Gather DNS2012R2 Alerts for date ($date).")
 
 
 # Grab past 24 hours
@@ -1060,9 +1147,9 @@ if ( $DNSAlerts.Count -gt 0 )
 		$Lmatch = $LLine |select-string -pattern " "
 		if ($Lmatch)
 			{
-			$Lmatch   
+			$Lmatch  
 			}
-		}           
+		}
 
 	foreach ( $file in $Zone )
 		{
@@ -1201,7 +1288,7 @@ if ( $DNSAlerts.Count -gt 0 )
 		$Remaining = $DNSAlerts | ? { $_.TimeRaised -gt $Time }  | ? { !( ( $_.Description -like "Event ID: 4015*" ) `
 			-OR ( $_.Name -eq "Windows DNS - NSLookup Failed Against a Local Address" ) `
 			-OR ( $_.Name -eq "Windows DNS - NSLookup Failed for Zone's NS Record" ) `
-			-OR ( $_.Name -eq "Windows DNS - Conditional Forward Forwarder - All IP Addresses Failing*" ) `
+			-OR ( $_.Name -like "Windows DNS - Conditional Forward Forwarder - All IP Addresses Failing*" ) `
 			-OR ( $_.Name -like "Windows DNS - NSLookup Failed for Zone*" ) ) 
 			}
 
@@ -1236,10 +1323,10 @@ $DNSMessage = $DNSMessage | out-string
 #============================================================
 
 
-  $Result = "GOOD"
-  $Message = "Daily DNS alerts report for ($date)"
+$Result = "GOOD"
+$Message = "Daily DNS alerts report for ($date)"
 
-  $momapi.LogScriptEvent($ScriptName,$EventID,0,"`n# DNS Monitors auto-closed for ($date). `n `n$DNSMessage")
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Summary report completed for ($date). `n `n$DNSMessage")
 
 #$bag.AddValue('Result',$Result)
 $bag.AddValue('Count',$Test)
@@ -1251,14 +1338,14 @@ $bag.AddValue('Summary',$DNSMessage)
 $bag
 #=================================================================================
 # End MAIN script section
- 
-  
+
+
 # End of script section
 #=================================================================================
 #Log an event for script ending and total execution time.
 $EndTime = Get-Date
 $ScriptTime = ($EndTime - $StartTime).TotalSeconds
-$momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script Completed. `n Script Runtime: ($ScriptTime) seconds.")
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Summary Report Script Completed. `n Script Runtime: ($ScriptTime) seconds.")
 #=================================================================================
 # End of script
                 </ScriptBody>
@@ -1284,7 +1371,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script Completed. `n Script Ru
           <Composite>
             <MemberModules>
               <WriteAction ID="PSWA" TypeID="Windows!Microsoft.Windows.PowerShellWriteAction">
-                <ScriptName>Proactive.DNS2012R2Alerts.Synthetic.Monitor.WA.v1043.ps1</ScriptName>
+                <ScriptName>Proactive.DNS2012R2Alerts.Synthetic.Monitor.WA.v1044.ps1</ScriptName>
                 <ScriptBody>
 #=================================================================================
 #  Proactive DNS2012R2 Synthetic internal/external PowerShell script
@@ -1307,8 +1394,8 @@ $InternalDNS = "ds.army.mil"
 
 # Constants section - modify stuff here:
 #=================================================================================
-# Assign script name variable for use in event logging.  
-$ScriptName = "Proactive.DNS2012R2Alerts.Synthetic.Monitor.WA.v1043.ps1"
+# Assign script name variable for use in event logging.
+$ScriptName = "Proactive.DNS2012R2Alerts.Synthetic.Monitor.WA.v1044.ps1"
 $EventID = "548"
 #=================================================================================
 
@@ -1325,7 +1412,7 @@ $momapi = New-Object -comObject MOM.ScriptAPI
 $bag = $momapi.CreatePropertyBag()
 
 #Log script event that we are starting task
-$momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script is starting. `n Running as ($whoami).")
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Synthetic Script is starting. `n Running as ($whoami).")
 #=================================================================================
 
 
@@ -1334,7 +1421,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script is starting. `n Running
 #For a simple example - get files in Windows Temp:
 $date = get-date -uFormat "%Y-%m-%d"
 
-$momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Gather Proactive DNS2012R2 Alerts Synthetic monitor check for date ($date).")
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"Gather Proactive DNS2012R2 Alerts Synthetic monitor check for date ($date).")
 
 $DSMessage = "Proactive DNS2012R2 Alerts Synthetic monitor for date ($date)."
 
@@ -1399,7 +1486,7 @@ $bag
 #Log an event for script ending and total execution time.
 $EndTime = Get-Date
 $ScriptTime = ($EndTime - $StartTime).TotalSeconds
-$momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script Completed. `n Script Runtime: ($ScriptTime) seconds.")
+$momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Synthetic Script Completed. `n Script Runtime: ($ScriptTime) seconds.")
 #=================================================================================
 # End of script
                 </ScriptBody>
@@ -1704,7 +1791,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script Completed. `n Script Ru
                     </HostProperty>
                   </ValueExpression>
                   <Operator>MatchesRegularExpression</Operator>
-                  <Pattern>(?i)##DNSServerRegEx##</Pattern>
+                  <Pattern>(?i)##DNSServerNamesRegEx##</Pattern>
                 </RegExExpression>
               </Expression>
             </MembershipRule>
@@ -1732,7 +1819,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script Completed. `n Script Ru
                     </HostProperty>
                   </ValueExpression>
                   <Operator>MatchesRegularExpression</Operator>
-                  <Pattern>(?i)##DNSServerRegEx##</Pattern>
+                  <Pattern>(?i)##DNSServerNamesRegEx##</Pattern>
                 </RegExExpression>
               </Expression>
             </MembershipRule>
@@ -1760,7 +1847,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script Completed. `n Script Ru
                     </HostProperty>
                   </ValueExpression>
                   <Operator>MatchesRegularExpression</Operator>
-                  <Pattern>(?i)##DNSServerRegEx##</Pattern>
+                  <Pattern>(?i)##DNSServerNamesRegEx##</Pattern>
                 </RegExExpression>
               </Expression>
             </MembershipRule>
@@ -1788,7 +1875,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script Completed. `n Script Ru
                     </HostProperty>
                   </ValueExpression>
                   <Operator>MatchesRegularExpression</Operator>
-                  <Pattern>(?i)##DNSServerRegEx##</Pattern>
+                  <Pattern>(?i)##DNSServerNamesRegEx##</Pattern>
                 </RegExExpression>
               </Expression>
             </MembershipRule>
@@ -3020,7 +3107,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script Completed. `n Script Ru
       <Recovery ID="Microsoft.Windows.Server.DNS.2012R2.Server.ADI.InterfaceError.Monitor.Recovery" Accessibility="Public" Enabled="true" Target="MWD2!Microsoft.Windows.Server.DNS.Server" Monitor="Microsoft.Windows.Server.DNS.2012R2.Server.ADI.InterfaceError.Monitor" ResetMonitor="true" ExecuteOnState="Warning" Remotable="true" Timeout="300">
         <Category>Custom</Category>
         <WriteAction ID="PSWA" TypeID="Windows!Microsoft.Windows.PowerShellWriteAction">
-          <ScriptName>Microsoft.Windows.Server.DNS.2012R2.Server.ADI.InterfaceError.Monitor.Service.Recovery.v1043.ps1</ScriptName>
+          <ScriptName>Microsoft.Windows.Server.DNS.2012R2.Server.ADI.InterfaceError.Monitor.Service.Recovery.v1044.ps1</ScriptName>
           <ScriptBody>
 #=================================================================================
 #  Script to restart a service
@@ -3041,7 +3128,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"`n Script Completed. `n Script Ru
 # Constants section - modify stuff here:
 #=================================================================================
 # Assign script name variable for use in event logging
-$ScriptName = "Microsoft.Windows.Server.DNS.2012R2.Server.ADI.InterfaceError.Monitor.Service.Recovery.v1043.ps1"
+$ScriptName = "Microsoft.Windows.Server.DNS.2012R2.Server.ADI.InterfaceError.Monitor.Service.Recovery.v1044.ps1"
 $EventID = "3750"
 #=================================================================================
 
@@ -3162,7 +3249,7 @@ write-host "Script Completed. Script Runtime: ($ScriptTime) seconds."
       <Recovery ID="Microsoft.Windows.Server.DNS.2012R2.Server.DNS.Service.Recovery" Accessibility="Public" Enabled="true" Target="MWD2!Microsoft.Windows.Server.DNS.Server" Monitor="MWD2!Microsoft.Windows.Server.DNS.Service.Running" ResetMonitor="true" ExecuteOnState="Error" Remotable="true" Timeout="300">
         <Category>Custom</Category>
         <WriteAction ID="PSWA" TypeID="Windows!Microsoft.Windows.PowerShellWriteAction">
-          <ScriptName>Microsoft.Windows.Server.DNS.2012R2.Server.DNS.Service.Recovery.v1043.ps1</ScriptName>
+          <ScriptName>Microsoft.Windows.Server.DNS.2012R2.Server.DNS.Service.Recovery.v1044.ps1</ScriptName>
           <ScriptBody>
 #=================================================================================
 #  Script to restart a service
@@ -3183,7 +3270,7 @@ write-host "Script Completed. Script Runtime: ($ScriptTime) seconds."
 # Constants section - modify stuff here:
 #=================================================================================
 # Assign script name variable for use in event logging
-$ScriptName = "Microsoft.Windows.Server.DNS.2012R2.Server.DNS.Service.Recovery.v1043.ps1"
+$ScriptName = "Microsoft.Windows.Server.DNS.2012R2.Server.DNS.Service.Recovery.v1044.ps1"
 $EventID = "3750"
 #=================================================================================
 
@@ -3327,7 +3414,6 @@ write-host "Script Completed. Script Runtime: ($ScriptTime) seconds."
       <DiscoveryPropertyOverride ID="Override.Microsoft.Windows.Server.DNS.2012R2.Domain.Discovery" Context="MWD2!Microsoft.Windows.Server.DNS.Zone" Enforced="false" Discovery="MWD2!Microsoft.Windows.Server.DNS.DNSDomain.Discovery" Property="Enabled">
         <Value>false</Value>
       </DiscoveryPropertyOverride>
-
       <DiscoveryPropertyOverride ID="Override.Group.Microsoft.Windows.Server.DNS.2012R2.Forwarder.Conditional.Discovery" Context="Windows.Server.DNS.2012R2.Forwarder.Conditional.Forward.Root.Domain.Controllers.Group" ContextInstance="feff7a0f-01e4-2d4a-ab9d-cbbb566e7e5a" Enforced="false" Discovery="MWD2!Microsoft.Windows.Server.DNS.Forwarder.Conditional.Discovery" Property="Enabled">
         <Value>true</Value>
       </DiscoveryPropertyOverride>
@@ -3343,7 +3429,6 @@ write-host "Script Completed. Script Runtime: ($ScriptTime) seconds."
       <DiscoveryPropertyOverride ID="Override.Group.Microsoft.Windows.Server.DNS.2012R2.WINS.Discovery" Context="Windows.Server.DNS.2012R2.Root.Domain.Controllers.Group" ContextInstance="c15d7ef5-72dd-663c-fbfa-94f59286d8e8" Enforced="false" Discovery="MWD2!Microsoft.Windows.Server.DNS.WINS.Discovery" Property="Enabled">
         <Value>true</Value>
       </DiscoveryPropertyOverride>
-
       <DiscoveryPropertyOverride ID="Override.Microsoft.Windows.Server.DNS.2012R2.Zone.0to10PercentDiscovery" Context="MWD2!Microsoft.Windows.Server.DNS.Server" Enforced="false" Discovery="MWD2!Microsoft.Windows.DNSServer.Zone.0to10PercentDiscovery" Property="Enabled">
         <Value>false</Value>
       </DiscoveryPropertyOverride>
@@ -3374,7 +3459,6 @@ write-host "Script Completed. Script Runtime: ($ScriptTime) seconds."
       <DiscoveryPropertyOverride ID="Override.Microsoft.Windows.Server.DNS.2012R2.Zone.90to100PercentDiscovery" Context="MWD2!Microsoft.Windows.Server.DNS.Server" Enforced="false" Discovery="MWD2!Microsoft.Windows.Server.DNS.Zone.90to100PercentDiscovery" Property="Enabled">
         <Value>false</Value>
       </DiscoveryPropertyOverride>
-
       <DiscoveryPropertyOverride ID="Override.Group.Microsoft.Windows.Server.DNS.2012R2.Zone.0to10PercentDiscovery" Context="Windows.Server.DNS.2012R2.Root.Domain.Controllers.Group" ContextInstance="c15d7ef5-72dd-663c-fbfa-94f59286d8e8" Enforced="false" Discovery="MWD2!Microsoft.Windows.Server.DNS.Zone.0to10PercentDiscovery" Property="Enabled">
         <Value>true</Value>
       </DiscoveryPropertyOverride>
@@ -3390,7 +3474,7 @@ write-host "Script Completed. Script Runtime: ($ScriptTime) seconds."
       <DiscoveryPropertyOverride ID="Override.Group.Microsoft.Windows.Server.DNS.2012R2.Zone.40to50PercentDiscovery" Context="Windows.Server.DNS.2012R2.Root.Domain.Controllers.Group" ContextInstance="c15d7ef5-72dd-663c-fbfa-94f59286d8e8" Enforced="false" Discovery="MWD2!Microsoft.Windows.Server.DNS.Zone.40to50PercentDiscovery" Property="Enabled">
         <Value>true</Value>
       </DiscoveryPropertyOverride>
-       <DiscoveryPropertyOverride ID="Override.Group.Microsoft.Windows.Server.DNS.2012R2.Zone.50to60PercentDiscovery" Context="Windows.Server.DNS.2012R2.Root.Domain.Controllers.Group" ContextInstance="c15d7ef5-72dd-663c-fbfa-94f59286d8e8" Enforced="false" Discovery="MWD2!Microsoft.Windows.Server.DNS.Zone.50to60PercentDiscovery" Property="Enabled">
+      <DiscoveryPropertyOverride ID="Override.Group.Microsoft.Windows.Server.DNS.2012R2.Zone.50to60PercentDiscovery" Context="Windows.Server.DNS.2012R2.Root.Domain.Controllers.Group" ContextInstance="c15d7ef5-72dd-663c-fbfa-94f59286d8e8" Enforced="false" Discovery="MWD2!Microsoft.Windows.Server.DNS.Zone.50to60PercentDiscovery" Property="Enabled">
         <Value>true</Value>
       </DiscoveryPropertyOverride>
       <DiscoveryPropertyOverride ID="Override.Group.Microsoft.Windows.Server.DNS.2012R2.Zone.60to70PercentDiscovery" Context="Windows.Server.DNS.2012R2.Root.Domain.Controllers.Group" ContextInstance="c15d7ef5-72dd-663c-fbfa-94f59286d8e8" Enforced="false" Discovery="MWD2!Microsoft.Windows.Server.DNS.Zone.60to70PercentDiscovery" Property="Enabled">
@@ -3405,7 +3489,6 @@ write-host "Script Completed. Script Runtime: ($ScriptTime) seconds."
       <DiscoveryPropertyOverride ID="Override.Group.Microsoft.Windows.Server.DNS.2012R2.Zone.90to100PercentDiscovery" Context="Windows.Server.DNS.2012R2.Zone.Root.Domain.Controllers.Group" ContextInstance="382ab3ed-a4a5-e43a-62d4-dffcf4993cd7" Enforced="false" Discovery="MWD2!Microsoft.Windows.Server.DNS.Zone.90to100PercentDiscovery" Property="Enabled">
         <Value>true</Value>
       </DiscoveryPropertyOverride>
-
       <MonitorPropertyOverride ID="Override.Microsoft.Windows.Server.DNS.2012R2.Forwarder.Conditional.Forward.NSLookup" Context="MWD2!Microsoft.Windows.Server.DNS.Forwarder.Conditional.Forward" Enforced="false" Monitor="MWD2!Microsoft.Windows.Server.DNS.Forwarder.Conditional.Forward.NSLookup" Property="Enabled">
         <Value>false</Value>
       </MonitorPropertyOverride>
@@ -3424,7 +3507,6 @@ write-host "Script Completed. Script Runtime: ($ScriptTime) seconds."
       <MonitorPropertyOverride ID="Override.Microsoft.Windows.Server.DNS.2012R2.Zone.State" Context="MWD2!Microsoft.Windows.Server.DNS.Zone" Enforced="false" Monitor="MWD2!Microsoft.Windows.Server.DNS.Zone.State" Property="Enabled">
         <Value>false</Value>
       </MonitorPropertyOverride>
-
       <MonitorPropertyOverride ID="Override.Group.Microsoft.Windows.Server.DNS.2012R2.IPAddress.NSLookup" Context="Windows.Server.DNS.2012R2.Server.IP.Address.Root.Domain.Controllers.Group" ContextInstance="e9441944-7715-22a8-10fa-6ba327d9cfbf" Enforced="false" Monitor="MWD2!Microsoft.Windows.Server.DNS.IPAddress.NSLookup" Property="Enabled">
         <Value>true</Value>
       </MonitorPropertyOverride>
@@ -3434,7 +3516,6 @@ write-host "Script Completed. Script Runtime: ($ScriptTime) seconds."
       <MonitorPropertyOverride ID="Override.Group.Microsoft.Windows.Server.DNS.2012R2.Zone.NSLookup" Context="Windows.Server.DNS.2012R2.Zone.Root.Domain.Controllers.Group" ContextInstance="382ab3ed-a4a5-e43a-62d4-dffcf4993cd7" Enforced="false" Monitor="MWD2!Microsoft.Windows.Server.DNS.Zone.NSLookup" Property="Enabled">
         <Value>true</Value>
       </MonitorPropertyOverride>
-
       <RuleConfigurationOverride ID="Override.Severity.Microsoft.Windows.Server.DNS.2012R2.ADI.BackgroundLoadFailure.Rule" Context="MWD2!Microsoft.Windows.Server.DNS.Server" Enforced="false" Rule="MWD2!Microsoft.Windows.Server.DNS.ADI.BackgroundLoadFailure" Parameter="Severity" Module="Alert">
         <Value>1</Value>
       </RuleConfigurationOverride>
@@ -3453,11 +3534,9 @@ write-host "Script Completed. Script Runtime: ($ScriptTime) seconds."
       <RuleConfigurationOverride ID="Override.Severity.Microsoft.Windows.Server.DNS.2012R2.ADI.ZoneOperationFailed.Rule" Context="MWD2!Microsoft.Windows.Server.DNS.Zone" Enforced="false" Rule="MWD2!Microsoft.Windows.Server.DNS.ADI.ZoneOperationFailed" Parameter="Severity" Module="Alert">
         <Value>1</Value>
       </RuleConfigurationOverride>
-
       <RulePropertyOverride ID="Override.Microsoft.Windows.2012.AD.DNS2012R2.Server.Warning.EventCollection" Context="MWSA2D!Microsoft.Windows.Server.2012.R2.AD.DomainController.DNS" Enforced="false" Rule="MWSA2M!Microsoft.Windows.Server.2012.R2.AD.DNSServer.Warning.EventCollection" Property="Enabled">
         <Value>false</Value>
       </RulePropertyOverride>
-
       <RulePropertyOverride ID="Override.Disable.Microsoft.Windows.Server.DNS.2012R2.ADI.BackgroundLoadFailure" Context="MWD2!Microsoft.Windows.Server.DNS.Server" Enforced="false" Rule="MWD2!Microsoft.Windows.Server.DNS.ADI.BackgroundLoadFailure" Property="Enabled">
         <Value>false</Value>
       </RulePropertyOverride>
@@ -3555,22 +3634,21 @@ v1.0.0.3   9 Mar 2021 - Updated property, delivered pack with daily report/task,
 v1.0.0.0   8 Feb 2021 - Created for DNS server alert tuning</Description>
         </DisplayString>
         <DisplayString ElementID="Windows.Server.DNS.2012R2.Root.Domain.Controllers.Group">
-          <Name>Windows Server DNS 2012R2 - CONUS Domain Controllers</Name>
+          <Name>Windows Server DNS 2012R2 - Domain Controllers</Name>
           <Description>3 Mar 2022 - Disabling DNS2012R2 Discovery</Description>
         </DisplayString>
         <DisplayString ElementID="Windows.Server.DNS.2012R2.Server.IP.Address.Root.Domain.Controllers.Group">
-          <Name>Windows Server DNS 2012R2 Server IP Address - CONUS Domain Controllers</Name>
+          <Name>Windows Server DNS 2012R2 Server IP Address - domain controllers</Name>
           <Description>3 Mar 2022 - Disabling Windows Server DNS 2012R2 Server IP Address class</Description>
         </DisplayString>
         <DisplayString ElementID="Windows.Server.DNS.2012R2.Forwarder.Conditional.Forward.Root.Domain.Controllers.Group">
-          <Name>Windows Server DNS 2012R2 Forwarder Conditional Forward - CONUS Domain Controllers</Name>
+          <Name>Windows Server DNS 2012R2 Forwarder Conditional Forward - domain controllers</Name>
           <Description>3 Mar 2022 - Windows Server DNS 2012R2 Forwarder Conditional Forward</Description>
         </DisplayString>
         <DisplayString ElementID="Windows.Server.DNS.2012R2.Zone.Root.Domain.Controllers.Group">
-          <Name>Windows Server DNS 2012R2 Zone - CONUS Domain Controllers</Name>
+          <Name>Windows Server DNS 2012R2 Zone - Domain Controllers</Name>
           <Description>18 Mar 2022 - Run nslookup checks on a subset of domain controllers</Description>
         </DisplayString>
-
         <DisplayString ElementID="Proactive.DailyTasks.DNS2012.R2.Alerts.Close.Script.DataSource">
           <Name>Proactive DailyTasks DNS2012R2 Alerts report and auto-close DataSource</Name>
           <Description>This datasource generates DNS2012R2 Alerts report and auto-close DataSource</Description>
@@ -3583,7 +3661,6 @@ v1.0.0.0   8 Feb 2021 - Created for DNS server alert tuning</Description>
           <Name>Proactive DNS2012R2 Alerts Synthetic monitor DataSource</Name>
           <Description>This datasource runs PowerShell nslookup script</Description>
         </DisplayString>
-
         <DisplayString ElementID="Proactive.DailyTasks.DNS2012.R2.Alerts.Close.Script.Alert.WA">
           <Name>Proactive DailyTasks DNS2012R2 Alerts report and auto-close on-demand task</Name>
           <Description>This write-action task generates DNS2012R2 Alerts report and auto-close DataSource</Description>
@@ -3596,7 +3673,6 @@ v1.0.0.0   8 Feb 2021 - Created for DNS server alert tuning</Description>
           <Name>Proactive DNS2012R2 Alerts Synthetic monitor WA</Name>
           <Description>This write-action task runs PowerShell nslookup script</Description>
         </DisplayString>
-
         <DisplayString ElementID="Proactive.DNS2012R2.Repeated.Event.MonitorType">
           <Name>Proactive DNS2012R2 Repeated Event MonitorType</Name>
         </DisplayString>
@@ -3606,23 +3682,21 @@ v1.0.0.0   8 Feb 2021 - Created for DNS server alert tuning</Description>
         <DisplayString ElementID="Proactive.DNS2012R2Alerts.Synthetic.MonitorType">
           <Name>Proactive DNS2012R2 Alerts Synthetic monitor MonitorType</Name>
         </DisplayString>
-
         <DisplayString ElementID="Windows.Server.DNS.2012R2.Root.Domain.Controllers.Group.DiscoveryRule">
-          <Name>Populate Windows Server DNS 2012R2 - CONUS Domain Controllers</Name>
-          <Description>This discovery rule populates the group 'Windows Server DNS 2012R2 - CONUS Domain Controllers'</Description>
+          <Name>Populate Windows Server DNS 2012R2 - Domain Controllers</Name>
+          <Description>This discovery rule populates the group 'Windows Server DNS 2012R2 - Domain Controllers'</Description>
         </DisplayString>
         <DisplayString ElementID="Windows.Server.DNS.2012R2.Server.IP.Address.Root.Domain.Controllers.Group.DiscoveryRule">
-          <Name>Populate Windows Server DNS 2012R2 Server IP Address - CONUS Domain Controllers</Name>
-          <Description>This discovery rule populates the group 'Windows Server DNS 2012R2 Server IP Address - CONUS Domain Controllers'</Description>
+          <Name>Populate Windows Server DNS 2012R2 Server IP Address - domain controllers</Name>
+          <Description>This discovery rule populates the group 'Windows Server DNS 2012R2 Server IP Address - domain controllers'</Description>
         </DisplayString>
         <DisplayString ElementID="Windows.Server.DNS.2012R2.Forwarder.Conditional.Forward.Root.Domain.Controllers.Group.DiscoveryRule">
-          <Name>Populate Windows Server DNS 2012R2 Forwarder Conditional Forward - CONUS Domain Controllers</Name>
-          <Description>This discovery rule populates the group 'Windows Server DNS 2012R2 Forwarder Conditional Forward - CONUS Domain Controllers'</Description>
+          <Name>Populate Windows Server DNS 2012R2 Forwarder Conditional Forward - domain controllers</Name>
+          <Description>This discovery rule populates the group 'Windows Server DNS 2012R2 Forwarder Conditional Forward - domain controllers'</Description>
         </DisplayString>
-
         <DisplayString ElementID="Windows.Server.DNS.2012R2.Zone.Root.Domain.Controllers.Group.DiscoveryRule">
-          <Name>Populate Windows Server DNS 2012R2 Zone - CONUS Domain Controllers</Name>
-          <Description>This discovery rule populates the group 'Windows Server DNS 2012R2 Zone - CONUS Domain Controllers'</Description>
+          <Name>Populate Windows Server DNS 2012R2 Zone - Domain Controllers</Name>
+          <Description>This discovery rule populates the group 'Windows Server DNS 2012R2 Zone - Domain Controllers'</Description>
         </DisplayString>
         <DisplayString ElementID="Proactive.DailyTasks.DNS2012.R2.Alerts.Report.Script.Alert.Rule">
           <Name>Proactive DailyTasks DNS2012R2 Alerts Report Script Alert Rule</Name>
@@ -3720,7 +3794,6 @@ v1.0.0.0   8 Feb 2021 - Created for DNS server alert tuning</Description>
         <DisplayString ElementID="Microsoft.Windows.Server.DNS.2012R2.DNS.Service.FoundRunning.Recovery.Rule" SubElementID="DS">
           <Name>DS</Name>
         </DisplayString>
-
         <DisplayString ElementID="Proactive.DailyTasks.DNS2012.R2.Alerts.Report.Script.Task">
           <Name>Proactive DailyTasks DNS2012R2 Alerts AutoClose Report Script Task</Name>
           <Description>Proactive DailyTasks DNS2012R2 Alerts AutoClose task to kick off on-demand</Description>
@@ -3733,7 +3806,6 @@ v1.0.0.0   8 Feb 2021 - Created for DNS server alert tuning</Description>
           <Name>Proactive DailyTasks DNS2012R2 Alerts Synthetic Script Test Task</Name>
           <Description>Proactive DailyTasks DNS2012R2 Alerts Synthetic Script Test to kick off on-demand</Description>
         </DisplayString>
-
         <DisplayString ElementID="Microsoft.Windows.Server.DNS.2012R2.Server.ADI.404.SocketFailure.Monitor">
           <Name>Windows Server DNS 2012R2 ADI 404 SocketFailure monitor addendum alert</Name>
           <Description>Windows Server DNS 2012R2 ADI 404 SocketFailure monitor to include samples/count</Description>
@@ -3902,7 +3974,6 @@ Event Description: {0}</Description>
           <Description>Proactive DNS2012R2 Alerts Synthetic Monitor
 		  {0}</Description>
         </DisplayString>
-
         <DisplayString ElementID="Microsoft.Windows.Server.DNS.2012R2.Server.ADI.InterfaceError.Monitor.Recovery">
           <Name>Proactive Microsoft Windows Server DNS 2012R2  ADI Interface Error Monitor Recovery</Name>
           <Description>Restarts DNS2012R2 service when repeated errors occur.</Description>
@@ -3915,7 +3986,6 @@ Event Description: {0}</Description>
           <Name>Proactive Microsoft Windows Server DNS 2012R2  WMI Validation recovery to check Internal/External DNS2012R2 lookups functioning to reset unhealthy monitors</Name>
           <Description>Recovery script validates Internal/External DNS2012R2 lookups functioning for auto-reset unhealthy monitors WMI validation monitors</Description>
         </DisplayString>
-
         <DisplayString ElementID="Override.Microsoft.Windows.Server.DNS.2012R2.Server.Property.Discovery">
           <Name>NotUsed</Name>
           <Description>3 Mar 2022 - Disabling DNS2012R2 synthetics from 54</Description>
