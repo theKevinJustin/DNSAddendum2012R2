@@ -1,6 +1,6 @@
 # Microsoft.Windows.Server.DNS2012R2.Monitoring.Addendum v1.0.4.6
 
-Download here
+Download [here](https://github.com/theKevinJustin/DNSAddendum2012R2/blob/main/Microsoft.Windows.Server.DNS.Monitoring.2012R2.Addendum.xml)
 
 ### Microsoft.Windows.Server.DNS2012R2.Monitoring.Addendum
 Management pack provides multiple capabilities, including: count logic monitors, daily summary report alerts of DNS alerts, daily alert closure automation, service recovery automation, synthetic internal/external nslookup check scoped to PDC emulators (versus all DNS servers), and WMI validation alert logic changes when Security tools randomly block WMI access.
