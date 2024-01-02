@@ -2,7 +2,7 @@
   <Manifest>
     <Identity>
       <ID>Microsoft.Windows.Server.DNS.Monitoring.2012R2.Addendum</ID>
-      <Version>1.0.4.4</Version>
+      <Version>1.0.4.6</Version>
     </Identity>
     <Name>Microsoft Windows Server DNS Monitoring 2012R2 Addendum</Name>
     <References>
@@ -83,7 +83,7 @@
                 </Scheduler>
               </DataSource>
               <ProbeAction ID="PA" TypeID="Windows!Microsoft.Windows.PowerShellPropertyBagTriggerOnlyProbe">
-                <ScriptName>Proactive.DailyTasks.DNS2012.R2.Alerts.Close.Script.Datasource.v1044.ps1</ScriptName>
+                <ScriptName>Proactive.DailyTasks.DNS2012.R2.Alerts.Close.Script.Datasource.v1046.ps1</ScriptName>
                 <ScriptBody>
 #=================================================================================
 #  Script to gather DNS2012R2 alerts and close via on demand task
@@ -97,7 +97,7 @@
 #=================================================================================
 # Assign script name variable for use in event logging.
 # ScriptName should be the same as the ID of the module that the script is contained in
-$ScriptName = "Proactive.DailyTasks.DNS2012.R2.Alerts.Close.Script.Datasource.v1044.ps1"
+$ScriptName = "Proactive.DailyTasks.DNS2012.R2.Alerts.Close.Script.Datasource.v1046.ps1"
 $EventID = "546"
 #=================================================================================
 
@@ -147,16 +147,19 @@ $SCOMCoreMP = Get-SCOMManagementPack -DisplayName "Microsoft Windows Server DNS 
 $SCOMCoreRules = $SCOMCoreMP.GetRules()
 $SCOMCoreMonitors = $SCOMCoreMP.GetMonitors()
 
-$SCOMCoreReportAlerts = Get-SCOMAlert | ? { ($_.Name -in $SCOMCoreRules.DisplayName) -or ($_.Name -in $SCOMCoreMonitors.DisplayName) }
+$SCOMCoreReportAlerts = Get-SCOMAlert -ResolutionState (0..254) | ? { ($_.Name -in $SCOMCoreRules.DisplayName) -or ($_.Name -in $SCOMCoreMonitors.DisplayName) }
 $SCOMCoreReportAlerts.Count
 
-$SCOMOpenReportAlerts = $SCOMCoreReportAlerts | ? { ( $_.ResolutionState -ne "255" ) }
+$SCOMOpenReportAlerts = $SCOMCoreReportAlerts
 $SCOMOpenReportAlerts.Count
 
-$SCOMCoreRuleAlerts = Get-SCOMAlert | ? { ( $_.Name -in $SCOMCoreRules.DisplayName) -AND ( $_.ResolutionState -ne "255" ) }
+$SCOMClosedReportAlerts = Get-SCOMAlert -ResolutionState 255 | ? { ($_.Name -in $SCOMCoreRules.DisplayName) -or ($_.Name -in $SCOMCoreMonitors.DisplayName) }
+$SCOMClosedReportAlerts.Count
+
+$SCOMCoreRuleAlerts = $SCOMCoreReportAlerts | ? { ( $_.Name -in $SCOMCoreRules.DisplayName) }
 $SCOMCoreRuleAlerts.Count
 
-$SCOMCoreMonitorAlerts = Get-SCOMAlert | ? { ($_.Name -in $SCOMCoreMonitors.DisplayName ) -AND ( $_.ResolutionState -ne "255" ) }
+$SCOMCoreMonitorAlerts = $SCOMCoreReportAlerts | ? { ($_.Name -in $SCOMCoreMonitors.DisplayName ) }
 $SCOMCoreMonitorAlerts.Count
 
 $AutoClosed = $SCOMCoreMonitorAlerts.Count + $SCOMCoreRuleAlerts.Count
@@ -360,7 +363,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Closure Script Complete
                 </Scheduler>
               </DataSource>
               <ProbeAction ID="PA" TypeID="Windows!Microsoft.Windows.PowerShellPropertyBagTriggerOnlyProbe">
-                <ScriptName>Proactive.DailyTasks.DNS2012.R2.Alerts.SummaryReport.Script.Alert.DataSource.v1044.ps1</ScriptName>
+                <ScriptName>Proactive.DailyTasks.DNS2012.R2.Alerts.SummaryReport.Script.Alert.DataSource.v1046.ps1</ScriptName>
                 <ScriptBody>
 #=================================================================================
 #  Script to gather DNS2012R2 alerts and close via on demand task
@@ -374,7 +377,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Closure Script Complete
 #=================================================================================
 # Assign script name variable for use in event logging.
 # ScriptName should be the same as the ID of the module that the script is contained in
-$ScriptName = "Proactive.DailyTasks.DNS2012.R2.Alerts.SummaryReport.Script.Alert.DataSource.v1044.ps1"
+$ScriptName = "Proactive.DailyTasks.DNS2012.R2.Alerts.SummaryReport.Script.Alert.DataSource.v1046.ps1"
 $EventID = "548"
 #=================================================================================
 
@@ -418,15 +421,15 @@ if ( (get-date).DayOfWeek -eq "Monday" )
 	$Time = [DateTime](Get-Date).AddDays(-3)
 	}
 
-$DNSAlerts = get-scomalert -name "Windows DNS*" | ? { $_.TimeRaised -gt $Time }
+$DNSAlerts = get-scomalert -name "Windows DNS*" -ResolutionState (0..254)| ? { $_.TimeRaised -gt $Time }
 $DNSAlerts.Count
 
 if ( $DNSAlerts.Count -gt 0 )
 	{
 	$Zone = @()
 	$Unused = @()
-	$UnusedZones = get-scomalert -name "Windows DNS - Detect Unused Zone" | ? { $_.TimeRaised -gt $Time }
-	$UnusedZoneAlerts = get-scomalert -name "Windows DNS - Detect Unused Zone"
+	$UnusedZones = get-scomalert -name "Windows DNS - Detect Unused Zone" -ResolutionState (0..254)| ? { $_.TimeRaised -gt $Time }
+	$UnusedZoneAlerts = get-scomalert -name "Windows DNS - Detect Unused Zone" -ResolutionState (0..254)
 	$Alerts = $UnusedZones.MonitoringObjectDisplayName
 
 	foreach ($LLine in $Alerts)
@@ -668,7 +671,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Summary Report Script C
                 </Scheduler>
               </DataSource>
               <ProbeAction ID="PA" TypeID="Windows!Microsoft.Windows.PowerShellPropertyBagTriggerOnlyProbe">
-                <ScriptName>Proactive.DNS2012R2Alerts.Synthetic.Monitor.Datasource.v1044.ps1</ScriptName>
+                <ScriptName>Proactive.DNS2012R2Alerts.Synthetic.Monitor.Datasource.v1046.ps1</ScriptName>
                 <ScriptBody>
 #=================================================================================
 #  Proactive DNS2012R2 Synthetic internal/external PowerShell script
@@ -692,7 +695,7 @@ $InternalDNS = "ds.army.mil"
 # Constants section - modify stuff here:
 #=================================================================================
 # Assign script name variable for use in event logging.
-$ScriptName = "Proactive.DNS2012R2Alerts.Synthetic.Monitor.Datasource.v1044.ps1"
+$ScriptName = "Proactive.DNS2012R2Alerts.Synthetic.Monitor.Datasource.v1046.ps1"
 $EventID = "548"
 #=================================================================================
 
@@ -811,7 +814,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Synthetic Script Comple
           <Composite>
             <MemberModules>
               <WriteAction ID="PSWA" TypeID="Windows!Microsoft.Windows.PowerShellWriteAction">
-                <ScriptName>Proactive.DailyTasks.DNS2012.R2.Alerts.Close.Script.Alert.WA.v1044.ps1</ScriptName>
+                <ScriptName>Proactive.DailyTasks.DNS2012.R2.Alerts.Close.Script.Alert.WA.v1046.ps1</ScriptName>
                 <ScriptBody>
 #=================================================================================
 #  Script to gather DNS2012R2 alerts and close via on demand task
@@ -825,7 +828,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Synthetic Script Comple
 #=================================================================================
 # Assign script name variable for use in event logging.
 # ScriptName should be the same as the ID of the module that the script is contained in
-$ScriptName = "Proactive.DailyTasks.DNS2012.R2.Alerts.Close.Script.Datasource.v1044.ps1"
+$ScriptName = "Proactive.DailyTasks.DNS2012.R2.Alerts.Close.Script.Datasource.v1046.ps1"
 $EventID = "547"
 #=================================================================================
 
@@ -875,16 +878,19 @@ $SCOMCoreMP = Get-SCOMManagementPack -DisplayName "Microsoft Windows Server DNS 
 $SCOMCoreRules = $SCOMCoreMP.GetRules()
 $SCOMCoreMonitors = $SCOMCoreMP.GetMonitors()
 
-$SCOMCoreReportAlerts = Get-SCOMAlert | ? { ($_.Name -in $SCOMCoreRules.DisplayName) -or ($_.Name -in $SCOMCoreMonitors.DisplayName) }
+$SCOMCoreReportAlerts = Get-SCOMAlert -ResolutionState (0..254)| ? { ($_.Name -in $SCOMCoreRules.DisplayName) -or ($_.Name -in $SCOMCoreMonitors.DisplayName) }
 $SCOMCoreReportAlerts.Count
 
-$SCOMOpenReportAlerts = $SCOMCoreReportAlerts | ? { ( $_.ResolutionState -ne "255" ) }
+$SCOMOpenReportAlerts = $SCOMCoreReportAlerts
 $SCOMOpenReportAlerts.Count
 
-$SCOMCoreRuleAlerts = Get-SCOMAlert | ? { ( $_.Name -in $SCOMCoreRules.DisplayName) -AND ( $_.ResolutionState -ne "255" ) }
+$SCOMClosedReportAlerts = Get-SCOMAlert -ResolutionState 255 | ? { ($_.Name -in $SCOMCoreRules.DisplayName) -or ($_.Name -in $SCOMCoreMonitors.DisplayName) }
+$SCOMClosedReportAlerts.Count
+
+$SCOMCoreRuleAlerts = $SCOMCoreReportAlerts | ? { ( $_.Name -in $SCOMCoreRules.DisplayName) }
 $SCOMCoreRuleAlerts.Count
 
-$SCOMCoreMonitorAlerts = Get-SCOMAlert | ? { ($_.Name -in $SCOMCoreMonitors.DisplayName ) -AND ( $_.ResolutionState -ne "255" ) }
+$SCOMCoreMonitorAlerts = $SCOMCoreReportAlerts | ? { ($_.Name -in $SCOMCoreMonitors.DisplayName ) }
 $SCOMCoreMonitorAlerts.Count
 
 $AutoClosed = $SCOMCoreMonitorAlerts.Count + $SCOMCoreRuleAlerts.Count
@@ -1073,7 +1079,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Closure Script Complete
           <Composite>
             <MemberModules>
               <WriteAction ID="PSWA" TypeID="Windows!Microsoft.Windows.PowerShellWriteAction">
-                <ScriptName>Proactive.DailyTasks.DNS2012.R2.Alerts.SummaryReport.Script.Alert.WA.v1044.ps1</ScriptName>
+                <ScriptName>Proactive.DailyTasks.DNS2012.R2.Alerts.SummaryReport.Script.Alert.WA.v1046.ps1</ScriptName>
                 <ScriptBody>
 #=================================================================================
 #  Script to gather DNS2012R2 alerts and close via on demand task
@@ -1087,7 +1093,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Closure Script Complete
 #=================================================================================
 # Assign script name variable for use in event logging.
 # ScriptName should be the same as the ID of the module that the script is contained in
-$ScriptName = "Proactive.DailyTasks.DNS2012.R2.Alerts.SummaryReport.Script.Alert.WA.v1044.ps1"
+$ScriptName = "Proactive.DailyTasks.DNS2012.R2.Alerts.SummaryReport.Script.Alert.WA.v1046.ps1"
 $EventID = "549"
 #=================================================================================
 
@@ -1131,15 +1137,15 @@ if ( (get-date).DayOfWeek -eq "Monday" )
 	$Time = [DateTime](Get-Date).AddDays(-3)
 	}
 
-$DNSAlerts = get-scomalert -name "Windows DNS*" | ? { $_.TimeRaised -gt $Time }
+$DNSAlerts = get-scomalert -name "Windows DNS*" -ResolutionState (0..254)| ? { $_.TimeRaised -gt $Time }
 $DNSAlerts.Count
 
 if ( $DNSAlerts.Count -gt 0 )
 	{
 	$Zone = @()
 	$Unused = @()
-	$UnusedZones = get-scomalert -name "Windows DNS - Detect Unused Zone" | ? { $_.TimeRaised -gt $Time }
-	$UnusedZoneAlerts = get-scomalert -name "Windows DNS - Detect Unused Zone"
+	$UnusedZones = get-scomalert -name "Windows DNS - Detect Unused Zone" -ResolutionState (0..254)| ? { $_.TimeRaised -gt $Time }
+	$UnusedZoneAlerts = get-scomalert -name "Windows DNS - Detect Unused Zone" -ResolutionState (0..254)
 	$Alerts = $UnusedZones.MonitoringObjectDisplayName
 
 	foreach ($LLine in $Alerts)
@@ -1371,7 +1377,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Summary Report Script C
           <Composite>
             <MemberModules>
               <WriteAction ID="PSWA" TypeID="Windows!Microsoft.Windows.PowerShellWriteAction">
-                <ScriptName>Proactive.DNS2012R2Alerts.Synthetic.Monitor.WA.v1044.ps1</ScriptName>
+                <ScriptName>Proactive.DNS2012R2Alerts.Synthetic.Monitor.WA.v1046.ps1</ScriptName>
                 <ScriptBody>
 #=================================================================================
 #  Proactive DNS2012R2 Synthetic internal/external PowerShell script
@@ -1395,7 +1401,7 @@ $InternalDNS = "ds.army.mil"
 # Constants section - modify stuff here:
 #=================================================================================
 # Assign script name variable for use in event logging.
-$ScriptName = "Proactive.DNS2012R2Alerts.Synthetic.Monitor.WA.v1044.ps1"
+$ScriptName = "Proactive.DNS2012R2Alerts.Synthetic.Monitor.WA.v1046.ps1"
 $EventID = "548"
 #=================================================================================
 
@@ -3107,7 +3113,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Synthetic Script Comple
       <Recovery ID="Microsoft.Windows.Server.DNS.2012R2.Server.ADI.InterfaceError.Monitor.Recovery" Accessibility="Public" Enabled="true" Target="MWD2!Microsoft.Windows.Server.DNS.Server" Monitor="Microsoft.Windows.Server.DNS.2012R2.Server.ADI.InterfaceError.Monitor" ResetMonitor="true" ExecuteOnState="Warning" Remotable="true" Timeout="300">
         <Category>Custom</Category>
         <WriteAction ID="PSWA" TypeID="Windows!Microsoft.Windows.PowerShellWriteAction">
-          <ScriptName>Microsoft.Windows.Server.DNS.2012R2.Server.ADI.InterfaceError.Monitor.Service.Recovery.v1044.ps1</ScriptName>
+          <ScriptName>Microsoft.Windows.Server.DNS.2012R2.Server.ADI.InterfaceError.Monitor.Service.Recovery.v1046.ps1</ScriptName>
           <ScriptBody>
 #=================================================================================
 #  Script to restart a service
@@ -3128,7 +3134,7 @@ $momapi.LogScriptEvent($ScriptName,$EventID,0,"DNS2012R2 Synthetic Script Comple
 # Constants section - modify stuff here:
 #=================================================================================
 # Assign script name variable for use in event logging
-$ScriptName = "Microsoft.Windows.Server.DNS.2012R2.Server.ADI.InterfaceError.Monitor.Service.Recovery.v1044.ps1"
+$ScriptName = "Microsoft.Windows.Server.DNS.2012R2.Server.ADI.InterfaceError.Monitor.Service.Recovery.v1046.ps1"
 $EventID = "3750"
 #=================================================================================
 
@@ -3249,7 +3255,7 @@ write-host "Script Completed. Script Runtime: ($ScriptTime) seconds."
       <Recovery ID="Microsoft.Windows.Server.DNS.2012R2.Server.DNS.Service.Recovery" Accessibility="Public" Enabled="true" Target="MWD2!Microsoft.Windows.Server.DNS.Server" Monitor="MWD2!Microsoft.Windows.Server.DNS.Service.Running" ResetMonitor="true" ExecuteOnState="Error" Remotable="true" Timeout="300">
         <Category>Custom</Category>
         <WriteAction ID="PSWA" TypeID="Windows!Microsoft.Windows.PowerShellWriteAction">
-          <ScriptName>Microsoft.Windows.Server.DNS.2012R2.Server.DNS.Service.Recovery.v1044.ps1</ScriptName>
+          <ScriptName>Microsoft.Windows.Server.DNS.2012R2.Server.DNS.Service.Recovery.v1046.ps1</ScriptName>
           <ScriptBody>
 #=================================================================================
 #  Script to restart a service
@@ -3270,7 +3276,7 @@ write-host "Script Completed. Script Runtime: ($ScriptTime) seconds."
 # Constants section - modify stuff here:
 #=================================================================================
 # Assign script name variable for use in event logging
-$ScriptName = "Microsoft.Windows.Server.DNS.2012R2.Server.DNS.Service.Recovery.v1044.ps1"
+$ScriptName = "Microsoft.Windows.Server.DNS.2012R2.Server.DNS.Service.Recovery.v1046.ps1"
 $EventID = "3750"
 #=================================================================================
 
@@ -3612,6 +3618,8 @@ write-host "Script Completed. Script Runtime: ($ScriptTime) seconds."
         <DisplayString ElementID="Microsoft.Windows.Server.DNS.Monitoring.2012R2.Addendum">
           <Name>Microsoft Windows Server DNS Monitoring 2012R2 Addendum</Name>
           <Description>
+v1.0.4.6   4 Jan 2024 - Resolution State logic improvements for large environments
+v1.0.4.5  27 Dec 2023 - Whitespace audit, ResolutionState changes, performance changes to DS/WA
 v1.0.4.2  27 Sep 2023 - Updated Rule overrides
 v1.0.4.0  26 Sep 2023 - Updated Discovery and Overrides
 v1.0.3.6  11 Aug 2023 - Merged 2016 pack and converted to 2012R2
